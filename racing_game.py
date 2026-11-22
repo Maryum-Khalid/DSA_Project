@@ -17,17 +17,37 @@ Run it with:   python racing_game.py
 =============================================================
 """
 
+import ctypes
 import math
 import random
 import sys
 
 import pygame
 
+
+def make_dpi_aware():
+    """Windows stretches windows of programs that don't understand high-DPI
+    screens, so on a laptop at 150% scaling a 1000x700 window would really
+    be 1500x1050 pixels. This tells Windows we handle it ourselves."""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass            # older Windows: just carry on
+
 # ------------------------------------------------------------------
 # 1. BASIC SETTINGS (all the "magic numbers" live here so they are
 #    easy to find and easy to explain)
 # ------------------------------------------------------------------
-WIDTH, HEIGHT = 1000, 700          # window size
+WIDTH, HEIGHT = 1000, 700          # size the game draws at (not the window)
+# How big the window opens, as a fraction of the size above. 1.0 is full
+# size; lower it if the window is too big for your screen. You can also
+# change it while playing with the - and + keys.
+DEFAULT_WINDOW_SCALE = 0.80
+MIN_WINDOW_SCALE = 0.45
 FPS = 60                           # frames per second
 TOTAL_LAPS = 3                     # laps needed to finish the race
 WAYPOINTS = 180                    # how many points describe a track
@@ -431,9 +451,20 @@ class Bonus:
 # ------------------------------------------------------------------
 class Game:
     def __init__(self):
+        make_dpi_aware()
         pygame.init()
         pygame.display.set_caption("Mini Racing Game")
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+
+        # The game always *draws* at a fixed 1000x700 so every position in
+        # the code can stay a simple number. That drawing goes onto this
+        # off-screen canvas, which is then scaled to fit the real window.
+        self.screen = pygame.Surface((WIDTH, HEIGHT))
+        self.fullscreen = False
+        # Measure the monitor ONCE, before a window exists. After a window
+        # is open, pygame reports the window's size here instead.
+        self.desktop = self.detect_desktop_size()
+        self.window = pygame.display.set_mode(self.starting_window_size(),
+                                              pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
 
         self.f_small = pygame.font.SysFont("consolas", 16)
@@ -444,6 +475,65 @@ class Game:
         self.track_choice = 0
         self.diff_choice = 1
         self.state = "menu"          # "menu", "race", "results"
+
+    # -------------------------------------------------------------
+    # WINDOW HANDLING
+    # -------------------------------------------------------------
+    def detect_desktop_size(self):
+        """How big the monitor is, in real pixels."""
+        try:
+            return pygame.display.get_desktop_sizes()[0]
+        except Exception:                      # very old pygame
+            info = pygame.display.Info()
+            return info.current_w, info.current_h
+
+    def screen_fit_scale(self):
+        """The biggest scale that still fits on this monitor, leaving room
+        for the title bar and the taskbar."""
+        return min(1.0,
+                   self.desktop[0] * 0.90 / WIDTH,
+                   self.desktop[1] * 0.82 / HEIGHT)
+
+    def starting_window_size(self):
+        """Open at the preferred scale, shrunk further if the monitor is
+        too small for it."""
+        self.win_scale = min(DEFAULT_WINDOW_SCALE, self.screen_fit_scale())
+        return int(WIDTH * self.win_scale), int(HEIGHT * self.win_scale)
+
+    def change_window_scale(self, step):
+        """Make the window one step bigger or smaller (the - and + keys)."""
+        if self.fullscreen:
+            self.toggle_fullscreen()          # leave fullscreen first
+        biggest = self.screen_fit_scale()
+        self.win_scale = clamp(self.win_scale + step, MIN_WINDOW_SCALE, biggest)
+        self.resize_window(int(WIDTH * self.win_scale), int(HEIGHT * self.win_scale))
+
+    def present(self):
+        """Copy the 1000x700 canvas onto the window, scaled to whatever size
+        the window currently is. The aspect ratio is kept, so the picture is
+        never stretched - any leftover space becomes a black border."""
+        win_w, win_h = self.window.get_size()
+        if (win_w, win_h) == (WIDTH, HEIGHT):
+            self.window.blit(self.screen, (0, 0))          # exact size: no scaling
+        else:
+            fit = min(win_w / WIDTH, win_h / HEIGHT)
+            size = (max(1, int(WIDTH * fit)), max(1, int(HEIGHT * fit)))
+            self.window.fill(BLACK)
+            self.window.blit(pygame.transform.smoothscale(self.screen, size),
+                             ((win_w - size[0]) // 2, (win_h - size[1]) // 2))
+        pygame.display.flip()
+
+    def resize_window(self, width, height):
+        self.window = pygame.display.set_mode((max(400, width), max(280, height)),
+                                              pygame.RESIZABLE)
+
+    def toggle_fullscreen(self):
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.window = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        else:
+            self.resize_window(int(WIDTH * self.win_scale),
+                               int(HEIGHT * self.win_scale))
 
     # -------------------------------------------------------------
     def start_race(self):
@@ -478,16 +568,30 @@ class Game:
                 self.draw_race()
             else:
                 self.draw_results()
-            pygame.display.flip()
+            self.present()
 
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+            if event.type == pygame.VIDEORESIZE and not self.fullscreen:
+                self.resize_window(event.w, event.h)
+                continue
             if event.type != pygame.KEYDOWN:
                 continue
             key = event.key
+
+            # window keys work on every screen (menu, race, results)
+            if key in (pygame.K_F11, pygame.K_f):
+                self.toggle_fullscreen()
+                continue
+            if key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                self.change_window_scale(-0.1)
+                continue
+            if key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                self.change_window_scale(+0.1)
+                continue
 
             if self.state == "menu":
                 if key in (pygame.K_LEFT, pygame.K_a):
@@ -607,20 +711,21 @@ class Game:
             self.text("%s %s" % (prefix, name), self.f_mid, color, 140, 385 + i * 34)
 
         # ---- controls ----
-        self.panel(120, 500, 760, 150)
+        self.panel(120, 488, 760, 170)
         lines = [
             "CONTROLS",
             "  W / Up ....... accelerate        S / Down ..... brake / reverse",
             "  A / Left ..... steer left        D / Right .... steer right",
             "  X ............ use nitro         R ............ restart race",
-            "  ESC .......... back to menu",
+            "  ESC .......... back to menu       F / F11 ...... fullscreen",
+            "  - / + ........ smaller / bigger window (or drag its edge)",
             "Collect yellow coins for points and blue pickups for nitro.  %d laps to win." % TOTAL_LAPS,
         ]
         for i, line in enumerate(lines):
             color = YELLOW if i == 0 else WHITE
-            self.text(line, self.f_small, color, 140, 515 + i * 22)
+            self.text(line, self.f_small, color, 140, 498 + i * 22)
 
-        self.text("Press ENTER to start", self.f_mid, (120, 240, 140), 400, 665)
+        self.text("Press ENTER to start", self.f_mid, (120, 240, 140), 400, 668)
 
     def draw_race(self):
         self.track.draw(self.screen)

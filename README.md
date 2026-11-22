@@ -60,8 +60,22 @@ Pick a track and a difficulty on the menu, then press **Enter** to start.
 | `X` | Use nitro boost |
 | `R` | Restart the race |
 | `Esc` | Back to the menu |
+| `F` / `F11` | Toggle fullscreen |
+| `-` / `+` | Make the window smaller / bigger |
 
 Menu navigation: left/right changes the track, up/down changes the difficulty.
+
+## Window size
+
+The game draws at a fixed 1000x700 and then scales that picture to fit the
+window, so it looks correct at any size. The window opens at 80% of full size,
+shrinking further if your monitor is small. To change it:
+
+- press `-` or `+` while playing,
+- drag the window edge,
+- press `F` for fullscreen,
+- or edit `DEFAULT_WINDOW_SCALE` near the top of `racing_game.py` to change
+  the size it opens at every time.
 
 ## Troubleshooting
 
