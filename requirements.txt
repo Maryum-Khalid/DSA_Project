@@ -1,0 +1,6 @@
+# Install everything with:  pip install -r requirements.txt
+#
+# pygame-ce is the actively maintained fork of pygame. It is imported in
+# code as "import pygame", exactly like the original, and it ships ready
+# built for new Python versions (plain pygame fails to build on 3.13+).
+pygame-ce>=2.5.0
